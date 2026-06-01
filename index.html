@@ -7,69 +7,43 @@
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { background: #000; overflow: hidden; width: 100vw; height: 100vh; }
-
     #camara {
-      position: fixed;
-      top: 0; left: 0;
+      position: fixed; top: 0; left: 0;
       width: 100%; height: 100%;
-      object-fit: cover;
-      z-index: 0;
+      object-fit: cover; z-index: 0;
     }
-
     #canvas-ar {
-      position: fixed;
-      top: 0; left: 0;
+      position: fixed; top: 0; left: 0;
       width: 100%; height: 100%;
-      z-index: 1;
-      pointer-events: none;
+      z-index: 1; pointer-events: none;
     }
-
-    #video-src {
-      display: none;
-    }
-
+    #video-src { display: none; }
     #overlay-permiso {
-      position: fixed;
-      inset: 0;
+      position: fixed; inset: 0;
       background: rgba(0,0,0,0.85);
-      color: #fff;
-      display: flex;
+      color: #fff; display: flex;
       flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      z-index: 10;
-      font-family: sans-serif;
-      text-align: center;
-      padding: 2rem;
-      gap: 1.2rem;
+      align-items: center; justify-content: center;
+      z-index: 10; font-family: sans-serif;
+      text-align: center; padding: 2rem; gap: 1.2rem;
     }
     #overlay-permiso h2 { font-size: 1.4rem; }
     #overlay-permiso p  { font-size: 1rem; opacity: 0.8; }
     #btn-iniciar {
-      padding: 0.9rem 2.2rem;
-      font-size: 1.1rem;
-      background: #00cc44;
-      color: #fff;
-      border: none;
-      border-radius: 2rem;
-      cursor: pointer;
-      font-weight: bold;
+      padding: 0.9rem 2.2rem; font-size: 1.1rem;
+      background: #00cc44; color: #fff;
+      border: none; border-radius: 2rem;
+      cursor: pointer; font-weight: bold;
     }
-    #btn-iniciar:hover { background: #00aa33; }
   </style>
 </head>
 <body>
-
   <video id="camara" autoplay playsinline muted></video>
   <canvas id="canvas-ar"></canvas>
   <video id="video-src"
     src="https://raw.githubusercontent.com/noeliasetel/elciguenomundial26/main/download.mp4"
-    playsinline
-    loop
-    muted
-    crossorigin="anonymous">
+    playsinline loop muted crossorigin="anonymous">
   </video>
-
   <div id="overlay-permiso">
     <h2>✨ Experiencia en Realidad Aumentada</h2>
     <p>Pulsa el botón para activar la cámara y ver la animación</p>
@@ -77,12 +51,11 @@
   </div>
 
   <script>
-    const btnIniciar    = document.getElementById('btn-iniciar');
-    const overlayPermi  = document.getElementById('overlay-permiso');
-    const camVideo      = document.getElementById('camara');
-    const srcVideo      = document.getElementById('video-src');
-    const canvas        = document.getElementById('canvas-ar');
-
+    const btnIniciar   = document.getElementById('btn-iniciar');
+    const overlayPermi = document.getElementById('overlay-permiso');
+    const camVideo     = document.getElementById('camara');
+    const srcVideo     = document.getElementById('video-src');
+    const canvas       = document.getElementById('canvas-ar');
     const gl = canvas.getContext('webgl', { premultipliedAlpha: false, alpha: true });
 
     const vsSource = `
@@ -95,19 +68,38 @@
       }
     `;
 
+    // Chroma key mejorado: usa espacio de color HSL para detectar el verde con más precisión
     const fsSource = `
       precision mediump float;
       uniform sampler2D u_texture;
       varying vec2 v_texCoord;
+
+      vec3 rgb2hsv(vec3 c) {
+        vec4 K = vec4(0.0, -1.0/3.0, 2.0/3.0, -1.0);
+        vec4 p = mix(vec4(c.bg, K.wz), vec4(c.gb, K.xy), step(c.b, c.g));
+        vec4 q = mix(vec4(p.xyw, c.r), vec4(c.r, p.yzx), step(p.x, c.r));
+        float d = q.x - min(q.w, q.y);
+        float e = 1.0e-10;
+        return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x);
+      }
+
       void main() {
         vec4 color = texture2D(u_texture, v_texCoord);
-        float rDist = abs(color.r - 0.0);
-        float gDist = abs(color.g - 1.0);
-        float bDist = abs(color.b - 0.0);
-        float dist  = rDist + gDist + bDist;
-        float threshold = 0.55;
-        if (dist < threshold) {
-          gl_FragColor = vec4(0.0, 0.0, 0.0, 0.0);
+        vec3 hsv = rgb2hsv(color.rgb);
+
+        // Tono verde: entre 90° y 150° (en rango 0-1: 0.25 a 0.42)
+        float hue = hsv.x;
+        float sat = hsv.y;
+        float val = hsv.z;
+
+        bool isGreen = (hue > 0.25 && hue < 0.45)
+                    && (sat > 0.35)
+                    && (val > 0.15);
+
+        if (isGreen) {
+          // Suavizado en los bordes según saturación
+          float alpha = smoothstep(0.35, 0.55, 1.0 - sat);
+          gl_FragColor = vec4(color.rgb, alpha * 0.15);
         } else {
           gl_FragColor = color;
         }
@@ -123,77 +115,4 @@
 
     const program = gl.createProgram();
     gl.attachShader(program, compileShader(gl.VERTEX_SHADER,   vsSource));
-    gl.attachShader(program, compileShader(gl.FRAGMENT_SHADER, fsSource));
-    gl.linkProgram(program);
-    gl.useProgram(program);
-
-    const positions = new Float32Array([
-      -1,-1,  1,-1,  -1,1,
-       1,-1,  1, 1,  -1,1,
-    ]);
-    const texCoords = new Float32Array([
-      0,1, 1,1, 0,0,
-      1,1, 1,0, 0,0,
-    ]);
-
-    function bindBuffer(attr, data, size) {
-      const buf = gl.createBuffer();
-      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-      gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
-      const loc = gl.getAttribLocation(program, attr);
-      gl.enableVertexAttribArray(loc);
-      gl.vertexAttribPointer(loc, size, gl.FLOAT, false, 0, 0);
-    }
-
-    bindBuffer('a_position', positions, 2);
-    bindBuffer('a_texCoord', texCoords, 2);
-
-    const texture = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, texture);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-
-    gl.enable(gl.BLEND);
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-
-    function resize() {
-      canvas.width  = window.innerWidth;
-      canvas.height = window.innerHeight;
-      gl.viewport(0, 0, canvas.width, canvas.height);
-    }
-    window.addEventListener('resize', resize);
-    resize();
-
-    function render() {
-      requestAnimationFrame(render);
-      if (srcVideo.readyState < 2) return;
-      gl.clear(gl.COLOR_BUFFER_BIT);
-      gl.bindTexture(gl.TEXTURE_2D, texture);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, srcVideo);
-      gl.drawArrays(gl.TRIANGLES, 0, 6);
-    }
-
-    btnIniciar.addEventListener('click', async () => {
-      overlayPermi.style.display = 'none';
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: 'environment' } },
-          audio: false
-        });
-        camVideo.srcObject = stream;
-        await camVideo.play();
-      } catch (e) {
-        console.warn('Cámara no disponible:', e);
-      }
-      srcVideo.muted = true;
-      try {
-        await srcVideo.play();
-      } catch (e) {
-        console.error('Error al reproducir vídeo:', e);
-      }
-      render();
-    });
-  </script>
-</body>
-</html>
+    gl.attachShader(program, compileShader(gl.FRAGMENT_
