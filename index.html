@@ -40,10 +40,13 @@
 <body>
   <video id="camara" autoplay playsinline muted></video>
   <canvas id="canvas-ar"></canvas>
+
+  <!-- Vídeo desde el mismo dominio GitHub Pages (sin CORS) -->
   <video id="video-src"
-    src="https://raw.githubusercontent.com/noeliasetel/elciguenomundial26/main/download.mp4"
-    playsinline loop muted crossorigin="anonymous">
+    src="download.mp4"
+    playsinline loop muted>
   </video>
+
   <div id="overlay-permiso">
     <h2>✨ Experiencia en Realidad Aumentada</h2>
     <p>Pulsa el botón para activar la cámara y ver la animación</p>
@@ -68,7 +71,6 @@
       }
     `;
 
-    // Chroma key mejorado: usa espacio de color HSL para detectar el verde con más precisión
     const fsSource = `
       precision mediump float;
       uniform sampler2D u_texture;
@@ -86,8 +88,6 @@
       void main() {
         vec4 color = texture2D(u_texture, v_texCoord);
         vec3 hsv = rgb2hsv(color.rgb);
-
-        // Tono verde: entre 90° y 150° (en rango 0-1: 0.25 a 0.42)
         float hue = hsv.x;
         float sat = hsv.y;
         float val = hsv.z;
@@ -97,7 +97,6 @@
                     && (val > 0.15);
 
         if (isGreen) {
-          // Suavizado en los bordes según saturación
           float alpha = smoothstep(0.35, 0.55, 1.0 - sat);
           gl_FragColor = vec4(color.rgb, alpha * 0.15);
         } else {
@@ -115,4 +114,71 @@
 
     const program = gl.createProgram();
     gl.attachShader(program, compileShader(gl.VERTEX_SHADER,   vsSource));
-    gl.attachShader(program, compileShader(gl.FRAGMENT_
+    gl.attachShader(program, compileShader(gl.FRAGMENT_SHADER, fsSource));
+    gl.linkProgram(program);
+    gl.useProgram(program);
+
+    const positions = new Float32Array([
+      -1,-1, 1,-1, -1,1,
+       1,-1, 1, 1, -1,1,
+    ]);
+    const texCoords = new Float32Array([
+      0,1, 1,1, 0,0,
+      1,1, 1,0, 0,0,
+    ]);
+
+    function bindBuffer(attr, data, size) {
+      const buf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+      const loc = gl.getAttribLocation(program, attr);
+      gl.enableVertexAttribArray(loc);
+      gl.vertexAttribPointer(loc, size, gl.FLOAT, false, 0, 0);
+    }
+
+    bindBuffer('a_position', positions, 2);
+    bindBuffer('a_texCoord', texCoords, 2);
+
+    const texture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+    function resize() {
+      canvas.width  = window.innerWidth;
+      canvas.height = window.innerHeight;
+      gl.viewport(0, 0, canvas.width, canvas.height);
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    function render() {
+      requestAnimationFrame(render);
+      if (srcVideo.readyState < 2) return;
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, srcVideo);
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+    }
+
+    btnIniciar.addEventListener('click', async () => {
+      overlayPermi.style.display = 'none';
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' } }, audio: false
+        });
+        camVideo.srcObject = stream;
+        await camVideo.play();
+      } catch (e) { console.warn('Cámara no disponible:', e); }
+      srcVideo.muted = true;
+      try { await srcVideo.play(); }
+      catch (e) { console.error('Error vídeo:', e); }
+      render();
+    });
+  </script>
+</body>
+</html>
