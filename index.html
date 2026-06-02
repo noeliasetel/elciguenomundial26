@@ -3,27 +3,29 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
-    <title>Animación AR Croma</title>
+    <title>AR Animation</title>
+    
     <script src="https://aframe.io/releases/1.2.0/aframe.min.js"></script>
     <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
-
+    
     <script>
         AFRAME.registerComponent('chromakey', {
-            schema: {
-                color: { type: 'color', default: '#00FF00' } // Detecta el verde puro
-            },
+            schema: { color: { default: {x: 0.0, y: 1.0, z: 0.0} } }, // Detecta verde puro
             init: function () {
                 this.el.addEventListener('materialtextureloaded', () => {
                     let mesh = this.el.getObject3D('mesh');
                     if (mesh && mesh.material) {
                         mesh.material.transparent = true;
                         mesh.material.onBeforeCompile = (shader) => {
-                            shader.uniforms.chromaColor = { value: new THREE.Color(this.data.color) };
+                            shader.uniforms.chromaColor = { value: new THREE.Vector3(this.data.color.x, this.data.color.y, this.data.color.z) };
                             shader.fragmentShader = shader.fragmentShader.replace(
                                 `vec4 diffuseColor = vec4( diffuse, opacity );`,
                                 `vec4 diffuseColor = vec4( diffuse, opacity );
-                                 float dist = distance(texture2D(map, vUv).rgb, chromaColor);
-                                 if (dist < 0.45) { discard; }` // Si se parece al verde, lo borra
+                                 vec3 keyColor = chromaColor;
+                                 float threshold = 0.45; 
+                                 float luma = dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114));
+                                 float diff = distance(diffuseColor.rgb, keyColor);
+                                 if(diff < threshold) { discard; }`
                             );
                         };
                     }
@@ -31,8 +33,32 @@
             }
         });
     </script>
+    <style>
+        /* Estilo para el botón de inicio obligatorio en móviles */
+        #btn-play {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.6);
+            color: white;
+            z-index: 9999;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            font-family: sans-serif;
+            font-size: 20px;
+            cursor: pointer;
+            text-align: center;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+    </style>
 </head>
 <body style="margin: 0; overflow: hidden;">
+
+    <div id="btn-play">
+        <p>📱 Toca la pantalla para iniciar la cámara y la animación</p>
+    </div>
 
     <a-scene embedded vr-mode-ui="enabled: false" arjs="sourceType: webcam; debugUIEnabled: false;">
         
@@ -41,7 +67,6 @@
                    src="video.mp4" 
                    preload="auto" 
                    loop="true" 
-                   autoplay="true" 
                    playsinline 
                    webkit-playsinline 
                    muted>
@@ -50,8 +75,8 @@
 
         <a-marker preset="hiro">
             <a-video src="#video-ar" 
-                     chromakey="color: #00FF00" 
-                     position="0 0 0" 
+                     chromakey 
+                     position="0 0.1 0" 
                      rotation="-90 0 0" 
                      width="1.77" 
                      height="1"
@@ -64,10 +89,19 @@
     </a-scene>
 
     <script>
-        window.addEventListener('click', () => {
-            const video = document.querySelector('#video-ar');
-            if (video && video.paused) {
-                video.play().catch(err => console.log("Error:", err));
+        const btn = document.getElementById('btn-play');
+        const video = document.getElementById('video-ar');
+
+        // Al hacer clic en la pantalla de inicio, reproducimos el video y ocultamos el botón
+        btn.addEventListener('click', () => {
+            if (video) {
+                video.play().then(() => {
+                    btn.style.display = 'none'; // Esconde el cartel si todo va bien
+                }).catch((error) => {
+                    alert("Error al reproducir el video. Asegúrate de que se llama video.mp4: " + error);
+                });
+            } else {
+                alert("No se encontró el elemento de video en el código.");
             }
         });
     </script>
