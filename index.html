@@ -1,109 +1,185 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
-    <title>AR Animation</title>
-    
-    <script src="https://aframe.io/releases/1.2.0/aframe.min.js"></script>
-    <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
-    
-    <script>
-        AFRAME.registerComponent('chromakey', {
-            schema: { color: { default: {x: 0.0, y: 1.0, z: 0.0} } }, // Detecta verde puro
-            init: function () {
-                this.el.addEventListener('materialtextureloaded', () => {
-                    let mesh = this.el.getObject3D('mesh');
-                    if (mesh && mesh.material) {
-                        mesh.material.transparent = true;
-                        mesh.material.onBeforeCompile = (shader) => {
-                            shader.uniforms.chromaColor = { value: new THREE.Vector3(this.data.color.x, this.data.color.y, this.data.color.z) };
-                            shader.fragmentShader = shader.fragmentShader.replace(
-                                `vec4 diffuseColor = vec4( diffuse, opacity );`,
-                                `vec4 diffuseColor = vec4( diffuse, opacity );
-                                 vec3 keyColor = chromaColor;
-                                 float threshold = 0.45; 
-                                 float luma = dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114));
-                                 float diff = distance(diffuseColor.rgb, keyColor);
-                                 if(diff < threshold) { discard; }`
-                            );
-                        };
-                    }
-                });
-            }
-        });
-    </script>
-    <style>
-        /* Estilo para el botón de inicio obligatorio en móviles */
-        #btn-play {
-            position: fixed;
-            top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.6);
-            color: white;
-            z-index: 9999;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            font-family: sans-serif;
-            font-size: 20px;
-            cursor: pointer;
-            text-align: center;
-            padding: 20px;
-            box-sizing: border-box;
-        }
-    </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>Animación AR</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000; overflow: hidden; width: 100vw; height: 100vh; }
+    #camara {
+      position: fixed; top: 0; left: 0;
+      width: 100%; height: 100%;
+      object-fit: cover; z-index: 0;
+    }
+    #canvas-ar {
+      position: fixed; top: 0; left: 0;
+      width: 100%; height: 100%;
+      z-index: 1; pointer-events: none;
+    }
+    #video-src { display: none; }
+    #overlay-permiso {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.85);
+      color: #fff; display: flex;
+      flex-direction: column;
+      align-items: center; justify-content: center;
+      z-index: 10; font-family: sans-serif;
+      text-align: center; padding: 2rem; gap: 1.2rem;
+    }
+    #overlay-permiso h2 { font-size: 1.4rem; }
+    #overlay-permiso p  { font-size: 1rem; opacity: 0.8; }
+    #btn-iniciar {
+      padding: 0.9rem 2.2rem; font-size: 1.1rem;
+      background: #00cc44; color: #fff;
+      border: none; border-radius: 2rem;
+      cursor: pointer; font-weight: bold;
+    }
+  </style>
 </head>
-<body style="margin: 0; overflow: hidden;">
+<body>
+  <video id="camara" autoplay playsinline muted></video>
+  <canvas id="canvas-ar"></canvas>
 
-    <div id="btn-play">
-        <p>📱 Toca la pantalla para iniciar la cámara y la animación</p>
-    </div>
+  <video id="video-src"
+    src="video.mp4"
+    playsinline loop muted>
+  </video>
 
-    <a-scene embedded vr-mode-ui="enabled: false" arjs="sourceType: webcam; debugUIEnabled: false;">
-        
-        <a-assets>
-            <video id="video-ar" 
-                   src="video.mp4" 
-                   preload="auto" 
-                   loop="true" 
-                   playsinline 
-                   webkit-playsinline 
-                   muted>
-            </video>
-        </a-assets>
+  <div id="overlay-permiso">
+    <h2>✨ Experiencia en Realidad Aumentada</h2>
+    <p>Pulsa el botón para activar la cámara y ver la animación</p>
+    <button id="btn-iniciar">▶ Iniciar AR</button>
+  </div>
 
-        <a-marker preset="hiro">
-            <a-video src="#video-ar" 
-                     chromakey 
-                     position="0 0.1 0" 
-                     rotation="-90 0 0" 
-                     width="1.77" 
-                     height="1"
-                     scale="2 2 2">
-            </a-video>
-        </a-marker>
+  <script>
+    const btnIniciar   = document.getElementById('btn-iniciar');
+    const overlayPermi = document.getElementById('overlay-permiso');
+    const camVideo     = document.getElementById('camara');
+    const srcVideo     = document.getElementById('video-src');
+    const canvas       = document.getElementById('canvas-ar');
+    const gl = canvas.getContext('webgl', { premultipliedAlpha: false, alpha: true });
 
-        <a-entity camera></a-entity>
+    const vsSource = `
+      attribute vec2 a_position;
+      attribute vec2 a_texCoord;
+      varying vec2 v_texCoord;
+      void main() {
+        gl_Position = vec4(a_position, 0.0, 1.0);
+        v_texCoord  = a_texCoord;
+      }
+    `;
 
-    </a-scene>
+    // Chroma key ajustado para verde claro (más amarillento)
+    const fsSource = `
+      precision mediump float;
+      uniform sampler2D u_texture;
+      varying vec2 v_texCoord;
 
-    <script>
-        const btn = document.getElementById('btn-play');
-        const video = document.getElementById('video-ar');
+      vec3 rgb2hsv(vec3 c) {
+        vec4 K = vec4(0.0, -1.0/3.0, 2.0/3.0, -1.0);
+        vec4 p = mix(vec4(c.bg, K.wz), vec4(c.gb, K.xy), step(c.b, c.g));
+        vec4 q = mix(vec4(p.xyw, c.r), vec4(c.r, p.yzx), step(p.x, c.r));
+        float d = q.x - min(q.w, q.y);
+        float e = 1.0e-10;
+        return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x);
+      }
 
-        // Al hacer clic en la pantalla de inicio, reproducimos el video y ocultamos el botón
-        btn.addEventListener('click', () => {
-            if (video) {
-                video.play().then(() => {
-                    btn.style.display = 'none'; // Esconde el cartel si todo va bien
-                }).catch((error) => {
-                    alert("Error al reproducir el video. Asegúrate de que se llama video.mp4: " + error);
-                });
-            } else {
-                alert("No se encontró el elemento de video en el código.");
-            }
+      void main() {
+        vec4 color = texture2D(u_texture, v_texCoord);
+        vec3 hsv = rgb2hsv(color.rgb);
+        float hue = hsv.x;
+        float sat = hsv.y;
+        float val = hsv.z;
+
+        // Rango ampliado para cubrir verdes claros y amarillo-verdosos
+        bool isGreen = (hue > 0.20 && hue < 0.50)
+                    && (sat > 0.25)
+                    && (val > 0.25);
+
+        if (isGreen) {
+          float edge = smoothstep(0.25, 0.50, 1.0 - sat);
+          gl_FragColor = vec4(color.rgb, edge * 0.08);
+        } else {
+          gl_FragColor = color;
+        }
+      }
+    `;
+
+    function compileShader(type, source) {
+      const shader = gl.createShader(type);
+      gl.shaderSource(shader, source);
+      gl.compileShader(shader);
+      return shader;
+    }
+
+    const program = gl.createProgram();
+    gl.attachShader(program, compileShader(gl.VERTEX_SHADER,   vsSource));
+    gl.attachShader(program, compileShader(gl.FRAGMENT_SHADER, fsSource));
+    gl.linkProgram(program);
+    gl.useProgram(program);
+
+    const positions = new Float32Array([
+      -1,-1, 1,-1, -1,1,
+       1,-1, 1, 1, -1,1,
+    ]);
+    const texCoords = new Float32Array([
+      0,1, 1,1, 0,0,
+      1,1, 1,0, 0,0,
+    ]);
+
+    function bindBuffer(attr, data, size) {
+      const buf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+      const loc = gl.getAttribLocation(program, attr);
+      gl.enableVertexAttribArray(loc);
+      gl.vertexAttribPointer(loc, size, gl.FLOAT, false, 0, 0);
+    }
+
+    bindBuffer('a_position', positions, 2);
+    bindBuffer('a_texCoord', texCoords, 2);
+
+    const texture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+    function resize() {
+      canvas.width  = window.innerWidth;
+      canvas.height = window.innerHeight;
+      gl.viewport(0, 0, canvas.width, canvas.height);
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    function render() {
+      requestAnimationFrame(render);
+      if (srcVideo.readyState < 2) return;
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, srcVideo);
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+    }
+
+    btnIniciar.addEventListener('click', async () => {
+      overlayPermi.style.display = 'none';
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' } }, audio: false
         });
-    </script>
+        camVideo.srcObject = stream;
+        await camVideo.play();
+      } catch (e) { console.warn('Cámara no disponible:', e); }
+      srcVideo.muted = true;
+      try { await srcVideo.play(); }
+      catch (e) { console.error('Error vídeo:', e); }
+      render();
+    });
+  </script>
 </body>
 </html>
