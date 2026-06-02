@@ -7,6 +7,7 @@
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { background: #000; overflow: hidden; width: 100vw; height: 100vh; }
+
     #camara {
       position: fixed; top: 0; left: 0;
       width: 100%; height: 100%;
@@ -18,166 +19,133 @@
       z-index: 1; pointer-events: none;
     }
     #video-src { display: none; }
-    #overlay-permiso {
+
+    #overlay {
       position: fixed; inset: 0;
-      background: rgba(0,0,0,0.85);
+      background: rgba(0,0,0,0.88);
       color: #fff; display: flex;
       flex-direction: column;
       align-items: center; justify-content: center;
       z-index: 10; font-family: sans-serif;
-      text-align: center; padding: 2rem; gap: 1.2rem;
+      text-align: center; padding: 2rem; gap: 1.5rem;
     }
-    #overlay-permiso h2 { font-size: 1.4rem; }
-    #overlay-permiso p  { font-size: 1rem; opacity: 0.8; }
-    #btn-iniciar {
-      padding: 0.9rem 2.2rem; font-size: 1.1rem;
+    #overlay h2 { font-size: 1.5rem; }
+    #overlay p  { font-size: 1rem; opacity: 0.8; }
+    #btn {
+      padding: 1rem 2.5rem; font-size: 1.2rem;
       background: #00cc44; color: #fff;
       border: none; border-radius: 2rem;
       cursor: pointer; font-weight: bold;
+      box-shadow: 0 4px 20px rgba(0,200,60,0.4);
     }
   </style>
 </head>
 <body>
+
   <video id="camara" autoplay playsinline muted></video>
   <canvas id="canvas-ar"></canvas>
+  <video id="video-src" src="video.mp4" playsinline loop muted preload="auto"></video>
 
-  <video id="video-src"
-    src="video.mp4"
-    playsinline loop muted>
-  </video>
-
-  <div id="overlay-permiso">
-    <h2>✨ Experiencia en Realidad Aumentada</h2>
-    <p>Pulsa el botón para activar la cámara y ver la animación</p>
-    <button id="btn-iniciar">▶ Iniciar AR</button>
+  <div id="overlay">
+    <h2>✨ Realidad Aumentada</h2>
+    <p>Pulsa para activar la cámara y ver la animación</p>
+    <button id="btn">▶ Iniciar AR</button>
   </div>
 
   <script>
-    const btnIniciar   = document.getElementById('btn-iniciar');
-    const overlayPermi = document.getElementById('overlay-permiso');
-    const camVideo     = document.getElementById('camara');
-    const srcVideo     = document.getElementById('video-src');
-    const canvas       = document.getElementById('canvas-ar');
-    const gl = canvas.getContext('webgl', { premultipliedAlpha: false, alpha: true });
+    const btn      = document.getElementById('btn');
+    const overlay  = document.getElementById('overlay');
+    const camVideo = document.getElementById('camara');
+    const srcVideo = document.getElementById('video-src');
+    const canvas   = document.getElementById('canvas-ar');
+    const ctx      = canvas.getContext('2d');
 
-    const vsSource = `
-      attribute vec2 a_position;
-      attribute vec2 a_texCoord;
-      varying vec2 v_texCoord;
-      void main() {
-        gl_Position = vec4(a_position, 0.0, 1.0);
-        v_texCoord  = a_texCoord;
-      }
-    `;
-
-    // Chroma key ajustado para verde claro (más amarillento)
-    const fsSource = `
-      precision mediump float;
-      uniform sampler2D u_texture;
-      varying vec2 v_texCoord;
-
-      vec3 rgb2hsv(vec3 c) {
-        vec4 K = vec4(0.0, -1.0/3.0, 2.0/3.0, -1.0);
-        vec4 p = mix(vec4(c.bg, K.wz), vec4(c.gb, K.xy), step(c.b, c.g));
-        vec4 q = mix(vec4(p.xyw, c.r), vec4(c.r, p.yzx), step(p.x, c.r));
-        float d = q.x - min(q.w, q.y);
-        float e = 1.0e-10;
-        return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x);
-      }
-
-      void main() {
-        vec4 color = texture2D(u_texture, v_texCoord);
-        vec3 hsv = rgb2hsv(color.rgb);
-        float hue = hsv.x;
-        float sat = hsv.y;
-        float val = hsv.z;
-
-        // Rango ampliado para cubrir verdes claros y amarillo-verdosos
-        bool isGreen = (hue > 0.20 && hue < 0.50)
-                    && (sat > 0.25)
-                    && (val > 0.25);
-
-        if (isGreen) {
-          float edge = smoothstep(0.25, 0.50, 1.0 - sat);
-          gl_FragColor = vec4(color.rgb, edge * 0.08);
-        } else {
-          gl_FragColor = color;
-        }
-      }
-    `;
-
-    function compileShader(type, source) {
-      const shader = gl.createShader(type);
-      gl.shaderSource(shader, source);
-      gl.compileShader(shader);
-      return shader;
-    }
-
-    const program = gl.createProgram();
-    gl.attachShader(program, compileShader(gl.VERTEX_SHADER,   vsSource));
-    gl.attachShader(program, compileShader(gl.FRAGMENT_SHADER, fsSource));
-    gl.linkProgram(program);
-    gl.useProgram(program);
-
-    const positions = new Float32Array([
-      -1,-1, 1,-1, -1,1,
-       1,-1, 1, 1, -1,1,
-    ]);
-    const texCoords = new Float32Array([
-      0,1, 1,1, 0,0,
-      1,1, 1,0, 0,0,
-    ]);
-
-    function bindBuffer(attr, data, size) {
-      const buf = gl.createBuffer();
-      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-      gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
-      const loc = gl.getAttribLocation(program, attr);
-      gl.enableVertexAttribArray(loc);
-      gl.vertexAttribPointer(loc, size, gl.FLOAT, false, 0, 0);
-    }
-
-    bindBuffer('a_position', positions, 2);
-    bindBuffer('a_texCoord', texCoords, 2);
-
-    const texture = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, texture);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-
-    gl.enable(gl.BLEND);
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    let offscreen, octx;
 
     function resize() {
       canvas.width  = window.innerWidth;
       canvas.height = window.innerHeight;
-      gl.viewport(0, 0, canvas.width, canvas.height);
     }
     window.addEventListener('resize', resize);
     resize();
 
+    function removeGreen(imageData) {
+      const d = imageData.data;
+      for (let i = 0; i < d.length; i += 4) {
+        const r = d[i];
+        const g = d[i+1];
+        const b = d[i+2];
+
+        // Detecta verde: g es el canal dominante
+        // Cubre verde puro #00ff00 y verdes claros
+        if (g > 80 && g > r * 1.3 && g > b * 1.3) {
+          // Suavizado en bordes según cuánto domina el verde
+          const greenness = (g - Math.max(r, b)) / 255;
+          d[i+3] = Math.max(0, Math.floor((1 - greenness * 2.5) * 255));
+        }
+      }
+      return imageData;
+    }
+
     function render() {
       requestAnimationFrame(render);
       if (srcVideo.readyState < 2) return;
-      gl.clear(gl.COLOR_BUFFER_BIT);
-      gl.bindTexture(gl.TEXTURE_2D, texture);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, srcVideo);
-      gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+      const vw = srcVideo.videoWidth;
+      const vh = srcVideo.videoHeight;
+      if (!vw || !vh) return;
+
+      // Offscreen canvas para procesar píxeles
+      if (!offscreen || offscreen.width !== vw || offscreen.height !== vh) {
+        offscreen = document.createElement('canvas');
+        offscreen.width  = vw;
+        offscreen.height = vh;
+        octx = offscreen.getContext('2d', { willReadFrequently: true });
+      }
+
+      // Dibujar frame del vídeo en offscreen
+      octx.drawImage(srcVideo, 0, 0, vw, vh);
+
+      // Eliminar fondo verde
+      const imageData = octx.getImageData(0, 0, vw, vh);
+      const processed = removeGreen(imageData);
+      octx.putImageData(processed, 0, 0);
+
+      // Calcular tamaño para cubrir pantalla manteniendo proporción
+      const scale = Math.min(canvas.width / vw, canvas.height / vh);
+      const drawW = vw * scale;
+      const drawH = vh * scale;
+      const dx = (canvas.width  - drawW) / 2;
+      const dy = (canvas.height - drawH) / 2;
+
+      // Limpiar y dibujar sobre cámara
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(offscreen, dx, dy, drawW, drawH);
     }
 
-    btnIniciar.addEventListener('click', async () => {
-      overlayPermi.style.display = 'none';
+    btn.addEventListener('click', async () => {
+      overlay.style.display = 'none';
+
+      // Activar cámara trasera
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: 'environment' } }, audio: false
+          video: { facingMode: { ideal: 'environment' } },
+          audio: false
         });
         camVideo.srcObject = stream;
         await camVideo.play();
-      } catch (e) { console.warn('Cámara no disponible:', e); }
+      } catch (e) {
+        console.warn('Cámara no disponible:', e);
+      }
+
+      // Reproducir vídeo
       srcVideo.muted = true;
-      try { await srcVideo.play(); }
-      catch (e) { console.error('Error vídeo:', e); }
+      try {
+        await srcVideo.play();
+      } catch (e) {
+        console.error('Error al reproducir vídeo:', e);
+      }
+
       render();
     });
   </script>
