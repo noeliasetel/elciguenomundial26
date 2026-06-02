@@ -3,19 +3,42 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
-    <title>Animación AR sin Fondo</title>
+    <title>Animación AR Croma</title>
     <script src="https://aframe.io/releases/1.2.0/aframe.min.js"></script>
     <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
-</head>
-<body style="margin: 0; overflow: hidden; -webkit-tap-highlight-color: transparent;">
 
-    <a-scene embedded 
-             vr-mode-ui="enabled: false" 
-             arjs="sourceType: webcam; debugUIEnabled: false; detectionMode: mono_and_matrix; matrixCodeType: 3x3;">
+    <script>
+        AFRAME.registerComponent('chromakey', {
+            schema: {
+                color: { type: 'color', default: '#00FF00' } // Detecta el verde puro
+            },
+            init: function () {
+                this.el.addEventListener('materialtextureloaded', () => {
+                    let mesh = this.el.getObject3D('mesh');
+                    if (mesh && mesh.material) {
+                        mesh.material.transparent = true;
+                        mesh.material.onBeforeCompile = (shader) => {
+                            shader.uniforms.chromaColor = { value: new THREE.Color(this.data.color) };
+                            shader.fragmentShader = shader.fragmentShader.replace(
+                                `vec4 diffuseColor = vec4( diffuse, opacity );`,
+                                `vec4 diffuseColor = vec4( diffuse, opacity );
+                                 float dist = distance(texture2D(map, vUv).rgb, chromaColor);
+                                 if (dist < 0.45) { discard; }` // Si se parece al verde, lo borra
+                            );
+                        };
+                    }
+                });
+            }
+        });
+    </script>
+</head>
+<body style="margin: 0; overflow: hidden;">
+
+    <a-scene embedded vr-mode-ui="enabled: false" arjs="sourceType: webcam; debugUIEnabled: false;">
         
         <a-assets>
             <video id="video-ar" 
-                   src="tu-video.webm" 
+                   src="video.mp4" 
                    preload="auto" 
                    loop="true" 
                    autoplay="true" 
@@ -27,10 +50,11 @@
 
         <a-marker preset="hiro">
             <a-video src="#video-ar" 
+                     chromakey="color: #00FF00" 
                      position="0 0 0" 
                      rotation="-90 0 0" 
-                     width="1.6" 
-                     height="0.9"
+                     width="1.77" 
+                     height="1"
                      scale="2 2 2">
             </a-video>
         </a-marker>
@@ -43,7 +67,7 @@
         window.addEventListener('click', () => {
             const video = document.querySelector('#video-ar');
             if (video && video.paused) {
-                video.play().catch(err => console.log("Error al reproducir:", err));
+                video.play().catch(err => console.log("Error:", err));
             }
         });
     </script>
