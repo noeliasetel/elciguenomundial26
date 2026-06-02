@@ -3,76 +3,165 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-  <title>Test AR</title>
+  <title>Animación AR</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { background: #111; color: #fff; font-family: sans-serif; padding: 1rem; }
-    #log { margin-top: 1rem; font-size: 0.85rem; line-height: 1.8; }
-    #log p { border-bottom: 1px solid #333; padding: 4px 0; }
-    .ok  { color: #00ff88; }
-    .err { color: #ff4444; }
-    button {
-      margin-top: 1rem; padding: 0.8rem 2rem;
-      background: #00cc44; color: #fff;
-      border: none; border-radius: 1rem;
-      font-size: 1rem; cursor: pointer;
+    body { background: #000; overflow: hidden; width: 100vw; height: 100vh; }
+
+    #camara {
+      position: fixed; top: 0; left: 0;
+      width: 100%; height: 100%;
+      object-fit: cover; z-index: 0;
     }
-    video { display: none; }
+    #canvas-ar {
+      position: fixed; top: 0; left: 0;
+      width: 100%; height: 100%;
+      z-index: 1; pointer-events: none;
+    }
+
+    /* Vídeo fuera de pantalla pero NO display:none (iOS lo requiere) */
+    #video-src {
+      position: fixed;
+      top: -9999px;
+      left: -9999px;
+      width: 1px;
+      height: 1px;
+      opacity: 0;
+    }
+
+    #overlay {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.88);
+      color: #fff; display: flex;
+      flex-direction: column;
+      align-items: center; justify-content: center;
+      z-index: 10; font-family: sans-serif;
+      text-align: center; padding: 2rem; gap: 1.5rem;
+    }
+    #overlay h2 { font-size: 1.5rem; }
+    #overlay p  { font-size: 1rem; opacity: 0.8; }
+    #btn {
+      padding: 1rem 2.5rem; font-size: 1.2rem;
+      background: #00cc44; color: #fff;
+      border: none; border-radius: 2rem;
+      cursor: pointer; font-weight: bold;
+    }
   </style>
 </head>
 <body>
-  <h2>🔍 Diagnóstico AR</h2>
-  <button id="btn">Iniciar test</button>
-  <div id="log"></div>
-  <video id="vid" src="video.mp4" playsinline muted loop preload="auto"></video>
+
+  <video id="camara" autoplay playsinline muted></video>
+  <canvas id="canvas-ar"></canvas>
+
+  <!-- iOS necesita el vídeo en el DOM y visible (aunque sea 1px) -->
+  <video id="video-src"
+    src="video.mp4"
+    playsinline
+    muted
+    loop
+    preload="auto"
+    webkit-playsinline>
+  </video>
+
+  <div id="overlay">
+    <h2>✨ Realidad Aumentada</h2>
+    <p>Pulsa para activar la cámara y ver la animación</p>
+    <button id="btn">▶ Iniciar AR</button>
+  </div>
 
   <script>
-    const log = document.getElementById('log');
-    const vid = document.getElementById('vid');
+    const btn      = document.getElementById('btn');
+    const overlay  = document.getElementById('overlay');
+    const camVideo = document.getElementById('camara');
+    const srcVideo = document.getElementById('video-src');
+    const canvas   = document.getElementById('canvas-ar');
+    const ctx      = canvas.getContext('2d', { willReadFrequently: true });
 
-    function msg(texto, ok) {
-      const p = document.createElement('p');
-      p.className = ok ? 'ok' : 'err';
-      p.textContent = (ok ? '✅ ' : '❌ ') + texto;
-      log.appendChild(p);
+    let offscreen, octx;
+
+    function resize() {
+      canvas.width  = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    function removeGreen(imageData) {
+      const d = imageData.data;
+      for (let i = 0; i < d.length; i += 4) {
+        const r = d[i];
+        const g = d[i+1];
+        const b = d[i+2];
+        if (g > 80 && g > r * 1.3 && g > b * 1.3) {
+          const greenness = (g - Math.max(r, b)) / 255;
+          d[i+3] = Math.max(0, Math.floor((1 - greenness * 2.5) * 255));
+        }
+      }
+      return imageData;
     }
 
-    document.getElementById('btn').addEventListener('click', async () => {
-      log.innerHTML = '';
+    function render() {
+      requestAnimationFrame(render);
+      if (srcVideo.readyState < 2) return;
 
-      // 1. Cámara
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-        stream.getTracks().forEach(t => t.stop());
-        msg('Cámara accesible', true);
-      } catch(e) {
-        msg('Cámara bloqueada: ' + e.message, false);
+      const vw = srcVideo.videoWidth;
+      const vh = srcVideo.videoHeight;
+      if (!vw || !vh) return;
+
+      if (!offscreen || offscreen.width !== vw || offscreen.height !== vh) {
+        offscreen = document.createElement('canvas');
+        offscreen.width  = vw;
+        offscreen.height = vh;
+        octx = offscreen.getContext('2d', { willReadFrequently: true });
       }
 
-      // 2. Vídeo carga
-      msg('readyState del vídeo: ' + vid.readyState + ' (necesita 2+)', vid.readyState >= 2);
-      msg('Src del vídeo: ' + vid.src, !!vid.src);
+      octx.drawImage(srcVideo, 0, 0, vw, vh);
+      const imageData = octx.getImageData(0, 0, vw, vh);
+      removeGreen(imageData);
+      octx.putImageData(imageData, 0, 0);
 
-      // 3. Intentar play
+      const scale = Math.min(canvas.width / vw, canvas.height / vh);
+      const drawW = vw * scale;
+      const drawH = vh * scale;
+      const dx = (canvas.width  - drawW) / 2;
+      const dy = (canvas.height - drawH) / 2;
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(offscreen, dx, dy, drawW, drawH);
+    }
+
+    btn.addEventListener('click', async () => {
+      overlay.style.display = 'none';
+
+      // Activar cámara
       try {
-        await vid.play();
-        msg('Vídeo reproduce OK', true);
-        msg('Duración: ' + vid.duration + 's', vid.duration > 0);
-        msg('Tamaño: ' + vid.videoWidth + 'x' + vid.videoHeight, vid.videoWidth > 0);
-      } catch(e) {
-        msg('Vídeo NO reproduce: ' + e.message, false);
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' } },
+          audio: false
+        });
+        camVideo.srcObject = stream;
+        await camVideo.play();
+      } catch (e) {
+        console.warn('Cámara:', e);
       }
 
-      // 4. Canvas 2D
+      // Reproducir vídeo — iOS requiere load() antes de play()
+      srcVideo.load();
+      srcVideo.muted = true;
+
+      // Esperar a que esté listo
+      await new Promise(resolve => {
+        if (srcVideo.readyState >= 2) { resolve(); return; }
+        srcVideo.addEventListener('canplay', resolve, { once: true });
+      });
+
       try {
-        const c = document.createElement('canvas');
-        const ctx = c.getContext('2d', { willReadFrequently: true });
-        ctx.drawImage(vid, 0, 0);
-        ctx.getImageData(0, 0, 1, 1);
-        msg('Canvas 2D + getImageData OK', true);
-      } catch(e) {
-        msg('Canvas 2D bloqueado: ' + e.message, false);
+        await srcVideo.play();
+      } catch (e) {
+        console.error('Error vídeo:', e);
       }
+
+      render();
     });
   </script>
 </body>
