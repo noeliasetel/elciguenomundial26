@@ -7,7 +7,6 @@
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { background: #000; overflow: hidden; width: 100vw; height: 100vh; }
-
     #camara {
       position: fixed; top: 0; left: 0;
       width: 100%; height: 100%;
@@ -22,7 +21,6 @@
       position: fixed;
       top: -9999px; left: -9999px;
       width: 1px; height: 1px;
-      opacity: 0;
     }
     #overlay {
       position: fixed; inset: 0;
@@ -89,7 +87,6 @@
     function render() {
       requestAnimationFrame(render);
       if (srcVideo.readyState < 2) return;
-
       const vw = srcVideo.videoWidth;
       const vh = srcVideo.videoHeight;
       if (!vw || !vh) return;
@@ -109,7 +106,7 @@
       const scale = Math.min(canvas.width / vw, canvas.height / vh);
       const drawW = vw * scale;
       const drawH = vh * scale;
-      const dx = (canvas.width  - drawW) / 2;
+      const dx = (canvas.width - drawW) / 2;
       const dy = (canvas.height - drawH) / 2;
 
       ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -119,6 +116,15 @@
     btn.addEventListener('click', async () => {
       overlay.style.display = 'none';
 
+      // PASO 1: reproducir vídeo PRIMERO (antes de la cámara, iOS lo requiere)
+      srcVideo.muted = true;
+      try {
+        await srcVideo.play();
+      } catch(e) {
+        console.error('Error vídeo:', e);
+      }
+
+      // PASO 2: activar cámara después
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: { ideal: 'environment' } },
@@ -130,20 +136,7 @@
         console.warn('Cámara:', e);
       }
 
-      srcVideo.load();
-      srcVideo.muted = true;
-
-      await new Promise(resolve => {
-        if (srcVideo.readyState >= 2) { resolve(); return; }
-        srcVideo.addEventListener('canplay', resolve, { once: true });
-      });
-
-      try {
-        await srcVideo.play();
-      } catch (e) {
-        console.error('Error vídeo:', e);
-      }
-
+      // PASO 3: arrancar render
       render();
     });
   </script>
